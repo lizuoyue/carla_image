@@ -6,6 +6,25 @@ import numpy as np
 import time, tqdm
 from PIL import Image
 
+palette = np.zeros((256,3), np.uint8)
+palette[:13] = np.array([
+    (0, 0, 0),
+    (70, 70, 70),
+    (190, 153, 153),
+    (250, 170, 160),
+    (220, 20, 60),
+    (153, 153, 153),
+    (157, 234, 50),
+    (128, 64, 128),
+    (244, 35, 232),
+    (107, 142, 35),
+    (0, 0, 142),
+    (102, 102, 156),
+    (220, 220, 0)
+])
+palette = palette.flatten()
+one_hot = np.eye(13)
+
 def get_panorama(
         filenames,
         panorama_size=[512, 256],
@@ -38,7 +57,7 @@ def get_panorama(
     zx = vz / vx
     zy = vz / vy
 
-    d = {'area':{}, 'x':{}, 'y':{}}
+    d = {'area': {}, 'x': {}, 'y': {}}
     d['area']['f'] = (vy < 0) & (-1 <= xy) & (xy <= 1) & (-1 <= zy) & (zy <= 1)
     d['area']['l'] = (vx < 0) & (-1 <= yx) & (yx <= 1) & (-1 <= zx) & (zx <= 1)
     d['area']['r'] = (vx > 0) & (-1 <= yx) & (yx <= 1) & (-1 <= zx) & (zx <= 1)
@@ -48,31 +67,57 @@ def get_panorama(
     d['x'] = {key: val for key, val in zip(li, [-xy, xz, -xz, yx, -xy, yx])}
     d['y'] = {key: val for key, val in zip(li, [zy, -yz, -yz, -zx, -zy, zx])}
 
-    res = np.zeros((nrow, ncol, 3))
+    rgb = np.zeros((nrow, ncol, 3), np.uint8)
+    dep = np.zeros((nrow, ncol), np.float)
+    # sem = np.zeros((nrow, ncol, 13), np.float)
+    sem = np.zeros((nrow, ncol), np.uint8)
     for filename in filenames:
         which = filename.split('_')[-1].replace('.png', '')
         assert(which in d['area'])
         coord_x = d['x'][which]
         coord_y = d['y'][which]
         area = d['area'][which]
-        im = np.array(Image.open(filename).convert('RGB')).transpose([2,0,1])
-        im = torch.from_numpy(im).float().unsqueeze(0)
         coord = np.stack([coord_x[area], coord_y[area]], axis=-1)
         coord = torch.from_numpy(coord).unsqueeze(0).unsqueeze(0)
-        val = F.grid_sample(im, coord, align_corners=True).squeeze().numpy().T
-        res[area] = val
-    Image.fromarray(res.astype(np.uint8)).save(filename.replace('pinhole', 'panorama').replace(f'_{which}', ''))
+
+        # RGB
+        im = np.array(Image.open(filename).convert('RGB')).transpose([2,0,1])
+        im = torch.from_numpy(im).float().unsqueeze(0)
+        rgb[area] = F.grid_sample(im, coord, align_corners=True).squeeze().numpy().T
+
+        # Depth
+        im = np.array(Image.open(filename.replace('rgb', 'dep')).convert('RGB')).astype(np.float).transpose([2,0,1])
+        im = (im[0:1] + im[1:2]*256 + im[2:3]*256*256) / (256**3-1) * 1000
+        im = torch.from_numpy(im).float().unsqueeze(0)
+        dep[area] = F.grid_sample(im, coord, align_corners=True).squeeze().numpy().T
+
+        # Sem
+        im = np.array(Image.open(filename.replace('rgb', 'sem')).convert('RGB'))[..., 0:1]
+        # im = one_hot[im.flatten()].reshape(im.shape + (13,)).transpose([2,0,1])
+        im = im.transpose([2,0,1])
+        im = torch.from_numpy(im).float().unsqueeze(0)
+        # sem[area] = F.grid_sample(im, coord, align_corners=True).squeeze().numpy().T
+        sem[area] = F.grid_sample(im, coord, mode='nearest', align_corners=True).squeeze().numpy().T
+
+    Image.fromarray(rgb.astype(np.uint8)).save(filename.replace('pinhole', 'panorama').replace(f'_{which}', ''))
+    Image.fromarray(dep.astype(np.uint8)).save(filename.replace('pinhole', 'panorama').replace('rgb', 'dep').replace(f'_{which}', ''))
+    # sem = Image.fromarray(sem.argmax(axis=-1).astype(np.uint8))
+    sem = Image.fromarray(sem.astype(np.uint8))
+    sem.putpalette(palette)
+    sem.save(filename.replace('pinhole', 'panorama').replace('rgb', 'sem').replace(f'_{which}', ''))
+    return
 
 if __name__ == '__main__':
 
-    # num = 6
-    # filenames = sorted(glob.glob('pinhole/*.png'))
-    # assert(len(filenames) % num == 0)
-    # for i in range(0, len(filenames), num):
-    #     get_panorama(filenames[i: i+num])
+    num = 6
+    filenames = sorted(glob.glob('pinhole_rgb/*.png'))
+    assert(len(filenames) % num == 0)
+    for i in range(0, len(filenames), num):
+        get_panorama(filenames[i: i+num])
+    quit()
     
     num = 15
-    filenames = sorted(glob.glob('panorama/*.png'))
+    filenames = sorted(glob.glob('panorama_rgb/*.png'))
     assert(len(filenames) % num == 0)
     for i in range(0, len(filenames), num):
         ims = [Image.open(filename) for filename in filenames[i: i+num]]
