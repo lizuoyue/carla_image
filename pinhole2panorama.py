@@ -20,7 +20,7 @@ palette[:14] = np.array([
     (107, 142, 35),
     (0, 0, 142),
     (102, 102, 156),
-    (220, 220, 0)
+    (220, 220, 0),
     (70, 130, 180)
 ])
 one_hot = np.eye(13)
@@ -126,12 +126,12 @@ def get_panorama(
         # sem[area] = F.grid_sample(im, coord, mode='nearest', align_corners=True).squeeze().numpy().T
 
     Image.fromarray(rgb.astype(np.uint8)).save(filename.replace('pinhole', 'panorama').replace(f'_{which}', ''))
+    dep[dep > 999.9] = 1000
     dep_rgb = depth_to_rgb(dep)
     Image.fromarray(dep_rgb).save(filename.replace('pinhole', 'panorama').replace('rgb', 'dep').replace(f'_{which}', ''))
-    sem.argmax(axis=-1).astype(np.uint8)
+    sem = sem.argmax(axis=-1).astype(np.uint8)
     sem[dep > 999] = 13
-    
-    sem = Image.fromarray()
+    sem = Image.fromarray(sem)
     # sem = Image.fromarray(sem.astype(np.uint8))
     sem.putpalette(palette.flatten())
     sem.save(filename.replace('pinhole', 'panorama').replace('rgb', 'sem').replace(f'_{which}', ''))
