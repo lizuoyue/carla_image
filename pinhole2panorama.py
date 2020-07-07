@@ -26,7 +26,7 @@ palette[:14] = np.array([
 one_hot = np.eye(13)
 
 def get_distance_depth_ratio(
-        image_size=[2048, 2048],
+        image_size,
         fov=90,
     ):
     w, h = image_size
@@ -50,9 +50,16 @@ def depth_to_rgb(depth):
 
 def get_panorama(
         filenames,
+        pinhole_size=[512, 512],
         panorama_size=[512, 256],
         min_max_lat=[-np.pi/2, np.pi/2],
     ):
+
+    assert(len(filenames) == 18)
+    pid = list({filename.split('_')[0] for filename in filenames})
+    assert(len(pid) == 1)
+    filenames.sort()
+    pid = pid[0].replace('pinhole', 'panorama')
 
     li = 'f,u,d,r,b,l'.split(',')
     ncol, nrow = panorama_size
@@ -68,7 +75,6 @@ def get_panorama(
     sin_lat = torch.sin(lat).view(nrow, 1).expand(nrow, ncol)
     cos_lat = torch.cos(lat).view(nrow, 1).expand(nrow, ncol)
 
-    # Compute the unit vector of each pixel
     vx = cos_lat.mul(sin_lon).numpy()
     vy = cos_lat.mul(cos_lon).numpy()
     vz = sin_lat.numpy()
@@ -90,76 +96,80 @@ def get_panorama(
     d['x'] = {key: val for key, val in zip(li, [ xy, xz, -xz, -yx, xy, -yx])}
     d['y'] = {key: val for key, val in zip(li, [-zy, yz,  yz, -zx, zy,  zx])}
 
-    ratio = get_distance_depth_ratio()
+    ratio = get_distance_depth_ratio(image_size=pinhole_size)
 
     rgb = np.zeros((nrow, ncol, 3), np.uint8)
     dep = np.zeros((nrow, ncol), np.float)
-    sem = np.zeros((nrow, ncol, 13), np.float)
-    # sem = np.zeros((nrow, ncol), np.uint8)
-    for filename in filenames:
-        which = filename.split('_')[-1].replace('.png', '')
-        assert(which in d['area'])
+    sem = np.zeros((nrow, ncol), np.uint8)
+    for i, which in enumerate(sorted(li)):
+        dep_file, rgb_file, sem_file = filenames[3*i], filenames[3*i+1], filenames[3*i+2]
+        assert(which == dep_file.split('_')[1])
+        assert(which == rgb_file.split('_')[1])
+        assert(which == sem_file.split('_')[1])
+
         coord_x = d['x'][which]
         coord_y = d['y'][which]
         area = d['area'][which]
         coord = np.stack([coord_x[area], coord_y[area]], axis=-1)
         coord = torch.from_numpy(coord).unsqueeze(0).unsqueeze(0)
 
-        # RGB
-        im = np.array(Image.open(filename).convert('RGB')).transpose([2,0,1])
+        # rgb
+        im = np.array(Image.open(rgb_file).convert('RGB')).transpose([2,0,1])
         im = torch.from_numpy(im).float().unsqueeze(0)
         rgb[area] = F.grid_sample(im, coord, mode='nearest', align_corners=True).squeeze().numpy().T
 
-        # Depth
-        im = np.array(Image.open(filename.replace('rgb', 'dep')).convert('RGB')).astype(np.float).transpose([2,0,1])
+        # dep
+        im = np.array(Image.open(dep_file).convert('RGB')).astype(np.float).transpose([2,0,1])
         im = (im[0:1] + im[1:2]*256 + im[2:3]*256*256) / (256**3-1) * 1000
         im = im * ratio
         im = torch.from_numpy(im).float().unsqueeze(0)
         dep[area] = F.grid_sample(im, coord, mode='nearest', align_corners=True).squeeze().numpy().T
 
-        # Sem
-        im = np.array(Image.open(filename.replace('rgb', 'sem')).convert('RGB'))[..., 0:1]
-        im = one_hot[im.flatten()].reshape(im.shape[:2] + (13,)).transpose([2,0,1])
+        # sem
+        im = np.array(Image.open(sem_file).convert('RGB'))[..., 0:1].transpose([2,0,1])
+        # im = one_hot[im.flatten()].reshape(im.shape[:2] + (13,)).transpose([2,0,1])
         # im = im.transpose([2,0,1])
         im = torch.from_numpy(im).float().unsqueeze(0)
         sem[area] = F.grid_sample(im, coord, mode='nearest', align_corners=True).squeeze().numpy().T
         # sem[area] = F.grid_sample(im, coord, mode='nearest', align_corners=True).squeeze().numpy().T
 
-    Image.fromarray(rgb.astype(np.uint8)).save(filename.replace('pinhole', 'panorama').replace(f'_{which}', ''))
-    dep[dep > 999.9] = 1000
+    # rgb
+    Image.fromarray(rgb.astype(np.uint8)).save(pid + '_rgb.png')
+
+    # dep
+    dep[dep > 999.99] = 1000
     dep_rgb = depth_to_rgb(dep)
-    Image.fromarray(dep_rgb).save(filename.replace('pinhole', 'panorama').replace('rgb', 'dep').replace(f'_{which}', ''))
-    sem = sem.argmax(axis=-1).astype(np.uint8)
-    sem[dep > 999] = 13
+    Image.fromarray(dep_rgb).save(pid + '_dep.png')
+
+    # sem
+    # sem = sem.argmax(axis=-1).astype(np.uint8)
+    sem[dep > 999.99] = 13
     sem = Image.fromarray(sem)
-    # sem = Image.fromarray(sem.astype(np.uint8))
     sem.putpalette(palette.flatten())
-    sem.save(filename.replace('pinhole', 'panorama').replace('rgb', 'sem').replace(f'_{which}', ''))
+    sem.save(pid + '_sem.png')
 
+    # coord
     coord = np.dstack([dep * vx, dep * vy, dep * vz])
-
-    return coord, rgb, np.array(sem)
+    return coord
 
 if __name__ == '__main__':
 
-    gap = 2.0
-    bias = -14.0
-
-    num = 6
-    filenames = sorted(glob.glob('pinhole_rgb/*.png'))
-    assert(len(filenames) % num == 0)
-    f_rgb = open('05_rgb.txt', 'w')
-    f_sem = open('05_sem.txt', 'w')
-    for i in range(0, len(filenames), num):
-        coord, rgb, sem = get_panorama(filenames[i: i+num])
-        sem_rgb = palette[sem.flatten()].reshape(rgb.shape)
-        coord[..., 1] += bias
-        bias += gap
-        for a, b, c in zip(coord.reshape((-1, 3)), rgb.reshape((-1, 3)), sem_rgb.reshape((-1, 3))):
-            f_rgb.write('%.6lf;%.6lf;%.6lf;%d;%d;%d\n' % (tuple(a) + tuple(b)))
-            f_sem.write('%.6lf;%.6lf;%.6lf;%d;%d;%d\n' % (tuple(a) + tuple(c)))
+    folders = sorted(glob.glob('pinhole/*'))
+    for folder in folders:
+        filenames = sorted(glob.glob(f'{folder}/*.png'))
+        num_files = len(filenames)
+        assert(num_files % 18 == 0)
+        for i in range(num_files // 18):
+            coord = get_panorama(filenames[i*18:i*18+18])
+            # sem_rgb = palette[sem.flatten()].reshape(rgb.shape)
+            # coord[..., 1] += bias
+            # bias += gap
+            # for a, b, c in zip(coord.reshape((-1, 3)), rgb.reshape((-1, 3)), sem_rgb.reshape((-1, 3))):
+            #     f_rgb.write('%.6lf;%.6lf;%.6lf;%d;%d;%d\n' % (tuple(a) + tuple(b)))
+            #     f_sem.write('%.6lf;%.6lf;%.6lf;%d;%d;%d\n' % (tuple(a) + tuple(c)))
     quit()
     
+    # GIF
     num = 15
     filenames = sorted(glob.glob('panorama_rgb/*.png'))
     assert(len(filenames) % num == 0)
