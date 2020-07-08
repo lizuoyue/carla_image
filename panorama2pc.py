@@ -82,6 +82,7 @@ if __name__ == '__main__':
 
     # panorama coord: right x, forward y, top z (right-handed)
     # carla coord: right y, forward x, top z (left-handed)
+    pc_len = 10
 
     random.seed(1993)
     folders = sorted(glob.glob('panorama/*'))
@@ -96,12 +97,14 @@ if __name__ == '__main__':
             flag = True
             while flag:
                 li = random.sample(range(num_points), 1)
-                for _ in range(14): # length of a pc
+                for _ in range(pc_len - 1): # length of a pc
                     nb = nbs[li[-1]]
                     if nb:
                         li.append(random.choice(nb))
-                if len(li) == 15:
+                if len(li) == pc_len:
                     flag = False
+                else:
+                    print(li)
             pc_coord, pc_rgb, pc_sem =[], [], []
             for it in li:
                 waypoint = waypoints[it]
@@ -121,14 +124,9 @@ if __name__ == '__main__':
                 pc_rgb.append(rgb)
                 pc_sem.append(sem)
 
-                # write_numpy_array(f'pc/{town}_%05d_rgb.txt' % it, np.hstack([pc_coord[-1], pc_rgb[-1]]))
-                # write_numpy_array(f'pc/{town}_%05d_sem.txt' % it, np.hstack([pc_coord[-1], pc_sem[-1]]))
-
             pc_coord = np.vstack(pc_coord)
             pc_rgb = np.vstack(pc_rgb)
             pc_sem = np.vstack(pc_sem)
         
             write_numpy_array(f'pc/{town}_%05d_rgb.txt' % li[0], np.hstack([pc_coord, pc_rgb]))
             write_numpy_array(f'pc/{town}_%05d_sem.txt' % li[0], np.hstack([pc_coord, pc_sem]))
-
-            quit()
