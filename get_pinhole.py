@@ -51,7 +51,7 @@ if __name__ == '__main__':
     client = carla.Client('localhost', 2000)
     client.set_timeout(10.0)
 
-    for town, gap in zip(towns[2:3], gaps[2:3]):
+    for town, gap in zip(towns[-2:-1], gaps[-2:-1]):
 
         d = np.load(f'waypoints/{town}.npz')
         world = client.load_world(town)
@@ -77,7 +77,7 @@ if __name__ == '__main__':
         waypoints = d['waypoints']
         for pid, waypoint in enumerate(waypoints):
 
-            if pid < 1850:
+            if pid < 1941:
                 continue
 
             cam_dict = {}
@@ -111,6 +111,9 @@ if __name__ == '__main__':
                 image.save_to_disk(f'pinhole/{town}/%05d_%s_%s.png' % cam_dict[cam_id])
 
             for cam_ins in cam:
+                cam_ins.stop()
                 cam_ins.destroy()
+                carla.command.DestroyActor(cam_ins.id)
+                carla.command.DestroyActor(cam_ins)
         
         quit()

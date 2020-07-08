@@ -167,12 +167,3 @@ if __name__ == '__main__':
             # for a, b, c in zip(coord.reshape((-1, 3)), rgb.reshape((-1, 3)), sem_rgb.reshape((-1, 3))):
             #     f_rgb.write('%.6lf;%.6lf;%.6lf;%d;%d;%d\n' % (tuple(a) + tuple(b)))
             #     f_sem.write('%.6lf;%.6lf;%.6lf;%d;%d;%d\n' % (tuple(a) + tuple(c)))
-    quit()
-    
-    # GIF
-    num = 15
-    filenames = sorted(glob.glob('panorama_rgb/*.png'))
-    assert(len(filenames) % num == 0)
-    for i in range(0, len(filenames), num):
-        ims = [Image.open(filename) for filename in filenames[i: i+num]]
-        ims[0].save(filenames[i].split('_')[0] + '.gif', save_all=True, append_images=ims[1:], loop=0, duration=250)
