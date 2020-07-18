@@ -38,7 +38,7 @@ def get_distance_depth_ratio(
     return np.sqrt(x ** 2 + y ** 2 + f ** 2) / f
 
 def depth_to_rgb(depth):
-    max_depth = 1000 * np.sqrt(3)
+    max_depth = 1000# * np.sqrt(3)
     depth = np.clip(depth, 0, max_depth)
     depth /= max_depth
     depth *= (256**3-1)
@@ -151,6 +151,116 @@ def get_panorama(
     # coord
     coord = np.dstack([dep * vx, dep * vy, dep * vz])
     return coord
+
+
+
+
+
+
+
+def pinhole_to_panorama(
+        pid,
+        img_dict,
+        panorama_size=[512, 256],
+        min_max_lat=[-np.pi/2, np.pi/2],
+    ):
+
+    assert(len(img_dict) == 18)
+    h, w = img_dict['rgb_f'].shape[:2]
+    for _, img in img_dict.items():
+        assert(img.shape[:2] == (h, w))
+
+    ncol, nrow = panorama_size
+    min_lat, max_lat = min_max_lat
+
+    x = (torch.arange(0, ncol, 1, dtype=torch.float32) + 0.5) / ncol
+    y = (torch.arange(0, nrow, 1, dtype=torch.float32) + 0.5) / nrow
+    lon = (x * 2.0 * np.pi - np.pi)
+    lat = (1.0 - y) * (max_lat - min_lat) + min_lat
+
+    sin_lon = torch.sin(lon).view(1, ncol).expand(nrow, ncol)
+    cos_lon = torch.cos(lon).view(1, ncol).expand(nrow, ncol)
+    sin_lat = torch.sin(lat).view(nrow, 1).expand(nrow, ncol)
+    cos_lat = torch.cos(lat).view(nrow, 1).expand(nrow, ncol)
+
+    vx = cos_lat.mul(sin_lon).numpy()
+    vy = cos_lat.mul(cos_lon).numpy()
+    vz = sin_lat.numpy()
+
+    xy = vx / vy
+    xz = vx / vz
+    yx = vy / vx
+    yz = vy / vz
+    zx = vz / vx
+    zy = vz / vy
+
+    li = 'f,u,d,r,b,l'.split(',')
+    d = {'area': {}, 'x': {}, 'y': {}}
+    d['area']['f'] = (vy > 0) & (-1 <= xy) & (xy <= 1) & (-1 <= zy) & (zy <= 1)
+    d['area']['l'] = (vx < 0) & (-1 <= yx) & (yx <= 1) & (-1 <= zx) & (zx <= 1)
+    d['area']['r'] = (vx > 0) & (-1 <= yx) & (yx <= 1) & (-1 <= zx) & (zx <= 1)
+    d['area']['b'] = (vy < 0) & (-1 <= xy) & (xy <= 1) & (-1 <= zy) & (zy <= 1)
+    d['area']['u'] = (vz > 0) & (-1 <= xz) & (xz <= 1) & (-1 <= yz) & (yz <= 1)
+    d['area']['d'] = (vz < 0) & (-1 <= xz) & (xz <= 1) & (-1 <= yz) & (yz <= 1)
+    d['x'] = {key: val for key, val in zip(li, [ xy, xz, -xz, -yx, xy, -yx])}
+    d['y'] = {key: val for key, val in zip(li, [-zy, yz,  yz, -zx, zy,  zx])}
+
+    ratio = get_distance_depth_ratio(image_size=(w, h))
+
+    rgb = np.zeros((nrow, ncol, 3), np.uint8)
+    dis = np.zeros((nrow, ncol), np.float)
+    sem = np.zeros((nrow, ncol), np.uint8)
+    for i, which in enumerate(sorted(li)):
+
+        coord_x = d['x'][which]
+        coord_y = d['y'][which]
+        area = d['area'][which]
+        coord = np.stack([coord_x[area], coord_y[area]], axis=-1)
+        coord = torch.from_numpy(coord).unsqueeze(0).unsqueeze(0)
+
+        # rgb
+        im = img_dict[f'rgb_{which}'][..., :3].transpose([2,0,1])
+        im = torch.from_numpy(im).float().unsqueeze(0)
+        rgb[area] = F.grid_sample(im, coord, mode='nearest', align_corners=True).squeeze().numpy().astype(np.uint8).T
+
+        # dis
+        im = img_dict[f'dep_{which}'][..., :3].astype(np.float).transpose([2,0,1])
+        im = (im[0:1] + im[1:2]*256 + im[2:3]*256*256) / (256**3-1) * 1000
+        im = im * ratio
+        im = torch.from_numpy(im).float().unsqueeze(0)
+        dis[area] = F.grid_sample(im, coord, mode='nearest', align_corners=True).squeeze().numpy().astype(np.float).T
+
+        # sem
+        im = img_dict[f'sem_{which}'][..., 0:1].transpose([2,0,1])
+        im = torch.from_numpy(im).float().unsqueeze(0)
+        sem[area] = F.grid_sample(im, coord, mode='nearest', align_corners=True).squeeze().numpy().astype(np.uint8).T
+
+    # rgb
+    Image.fromarray(rgb).save('%s_rgb.png' % pid)
+
+    # dep
+    dis[dis > 999.999] = 1000
+    dis_rgb = depth_to_rgb(dis)
+    Image.fromarray(dis_rgb).save('%s_dis.png' % pid)
+
+    # sem
+    sem[dis > 999.999] = 13
+    sem = Image.fromarray(sem)
+    sem.putpalette(palette.flatten())
+    sem.save('%s_sem.png' % pid)
+
+    return
+
+
+
+
+
+
+
+
+
+
+
 
 if __name__ == '__main__':
 
