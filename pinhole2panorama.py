@@ -25,13 +25,19 @@ palette[:14] = np.array([
 ])
 one_hot = np.eye(13)
 
-def get_distance_depth_ratio(
-        image_size,
-        fov=90,
-    ):
+def get_fov_90_range(image_size, fov):
+    assert(fov > 90)
     w, h = image_size
     fov_rad = fov / 180.0 * np.pi
-    f = (h/2.0) / np.tan(fov_rad/2)
+    f = int(np.round(w/2.0/np.tan(fov_rad/2)))
+    w2, h2 = w//2, h//2
+    return w2-f,w2+f,h2-f,h2+f
+
+
+def get_distance_depth_ratio(image_size, fov=90):
+    w, h = image_size
+    fov_rad = fov / 180.0 * np.pi
+    f = (w/2.0) / np.tan(fov_rad/2)
     x = np.arange(w) + 0.5 - w / 2
     y = np.arange(h) + 0.5 - h / 2
     x, y = np.meshgrid(x, y)
@@ -263,6 +269,9 @@ def pinhole_to_panorama(
 
 
 if __name__ == '__main__':
+
+    print(get_fov_90_range((1024,1024),96))
+    quit()
 
     folders = sorted(glob.glob('pinhole/*'))
     for folder in folders:
